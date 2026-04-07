@@ -37,6 +37,14 @@ If `~/.local/bin` isn't in your PATH, the installer will tell you what to add to
 
 After install, reload VS Code: `Ctrl+Shift+P` → `Developer: Reload Window`.
 
+## Uninstall
+
+```bash
+bash uninstall_visualizer.sh
+```
+
+Removes the viewer script, `visualize` command, and VS Code extension. The git repo itself is left for you to delete manually.
+
 ## Usage
 
 ```bash
