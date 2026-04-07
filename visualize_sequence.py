@@ -168,17 +168,20 @@ body {
     flex: 1; overflow-y: auto; overflow-x: hidden;
     position: relative;
 }
-#spacer { position: relative; width: 100%; }
+#spacer { position: relative; width: 100%; user-select: none; cursor: text; }
 
 /* ── sequence blocks ── */
 .block {
     position: absolute; left: 0; right: 0;
     padding: 0 24px;
 }
+.c { /* base char wrapper */ }
+.sel { background: #264f78 !important; color: #fff !important; font-weight: normal !important; }
 .line { white-space: pre; font-size: 13px; line-height: 1.4; letter-spacing: 1px; }
 .ruler { color: #555; font-size: 11px; letter-spacing: 1px; line-height: 1.3; }
-.fwd { color: #e0e0e0; }
-.rev { color: #7a7a7a; }
+.fwd { color: #e0e0e0; padding-bottom: 1px; }
+.ticks { color: #444; font-size: 11px; letter-spacing: 1px; line-height: 0.8; }
+.rev { color: #7a7a7a; padding-top: 1px; }
 .num { color: #569cd6; display: inline-block; min-width: 56px;
        text-align: right; margin-right: 8px; letter-spacing: 0; }
 
@@ -190,6 +193,35 @@ body {
 /* ── blast panel ── */
 #blastInput { width: 260px; }
 #blastInfo { font-size: 12px; color: #aaa; }
+#blastSettingsBtn { background: transparent; color: #aaa; border: 1px solid #555;
+    font-size: 14px; padding: 2px 7px; cursor: pointer; }
+#blastSettingsBtn:hover { color: #e0e0e0; border-color: #888; }
+#blastSettingsBtn.active { color: #4fc3f7; border-color: #4fc3f7; }
+
+/* ── blast settings panel ── */
+#blastSettings {
+    display: none; flex: none; background: #2a2a2a; border-bottom: 1px solid #3c3c3c;
+    padding: 8px 24px; gap: 16px; align-items: center; font-size: 12px; color: #aaa;
+    flex-wrap: wrap;
+}
+#blastSettings.open { display: flex; }
+#blastSettings label { display: flex; align-items: center; gap: 4px; }
+#blastSettings input[type="number"] {
+    background: #3c3c3c; color: #e0e0e0; border: 1px solid #555;
+    padding: 3px 6px; width: 70px; font-size: 12px; font-family: inherit;
+    border-radius: 3px;
+}
+#blastSettings .filter-title { color: #9cdcfe; margin-right: 4px; }
+#filteredCount { color: #888; font-style: italic; }
+
+/* ── position tooltip ── */
+#posTip {
+    position: fixed; z-index: 200; pointer-events: none;
+    background: #1e1e1e; color: #ccc; border: 1px solid #555;
+    padding: 3px 8px; border-radius: 3px; font-size: 12px;
+    font-family: 'Courier New', Consolas, monospace;
+    white-space: nowrap; display: none;
+}
 .blast-running { opacity: 0.6; pointer-events: none; }
 """
 
@@ -238,6 +270,7 @@ function measureBlockH() {
     div.innerHTML =
         '<div class="line ruler"><span class="num">&nbsp;</span>' + '\u00b7'.repeat(10) + '</div>' +
         '<div class="line fwd"><span class="num">&nbsp;</span>ACGTACGTAC</div>' +
+        '<div class="line ticks"><span class="num">&nbsp;</span>' + '\u2500'.repeat(10) + '</div>' +
         '<div class="line rev"><span class="num">&nbsp;</span>TGCATGCATG</div>';
     document.body.appendChild(div);
     BLOCK_H = Math.ceil(div.getBoundingClientRect().height) + 8; // +8 for gap
@@ -278,25 +311,28 @@ function createBlockEl(rec, bi) {
     const seq = rec.seq;
     const comp = rec.comp;
 
-    let ruler = '', fwd = '', rev = '';
+    const sMin = Math.min(selStart, selEnd);
+    const sMax = Math.max(selStart, selEnd);
+    const hasSel = selStart >= 0;
+
+    let ruler = '', fwd = '', rev = '', ticks = '';
     for (let i = start; i < end; i++) {
-        ruler += ((i - start + 1) % 10 === 0) ? '|' : '\u00b7';
+        const col = i - start + 1;
+        ruler += (col % 10 === 0) ? '|' : '\u00b7';
+        ticks += (col % 10 === 0) ? '|' : '\u2500';
 
         const sm = searchMarks ? searchMarks[i] : 0;
         const bc = blastCls[i];
-        let cls = '';
-        if (sm === 2) cls = 'hl hl-active';
-        else if (sm === 1) cls = 'hl hl-search';
-        else if (bc === 2) cls = 'hl hl-active';
-        else if (bc === 1) cls = 'hl hl-blast';
+        let cls = 'c';
+        if (sm === 2) cls = 'c hl hl-active';
+        else if (sm === 1) cls = 'c hl hl-search';
+        else if (bc === 2) cls = 'c hl hl-active';
+        else if (bc === 1) cls = 'c hl hl-blast';
 
-        if (cls) {
-            fwd += '<span class="' + cls + '">' + seq[i] + '</span>';
-            rev += '<span class="' + cls + '">' + comp[i] + '</span>';
-        } else {
-            fwd += seq[i];
-            rev += comp[i];
-        }
+        if (hasSel && i >= sMin && i <= sMax) cls += ' sel';
+
+        fwd += '<span data-p="' + i + '" class="' + cls + '">' + seq[i] + '</span>';
+        rev += '<span data-p="' + i + '" class="' + cls + '">' + comp[i] + '</span>';
     }
 
     const div = document.createElement('div');
@@ -308,6 +344,7 @@ function createBlockEl(rec, bi) {
     div.innerHTML =
         '<div class="line ruler"><span class="num">\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0</span>' + ruler + '</div>' +
         '<div class="line fwd"><span class="num">' + lbl + '</span>' + fwd + '</div>' +
+        '<div class="line ticks"><span class="num">\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0</span>' + ticks + '</div>' +
         '<div class="line rev"><span class="num">\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0</span>' + rev + '<span class="num"> ' + end + '</span></div>';
     return div;
 }
@@ -359,6 +396,7 @@ function rerenderVisible() {
 // ── switch sequence ──
 function selectSeq(idx) {
     curIdx = idx;
+    selStart = -1; selEnd = -1;
     const rec = SEQS[curIdx];
     numBlocks = Math.ceil(rec.seq.length / W);
 
@@ -524,6 +562,27 @@ const blastNextBtn= document.getElementById('blastNextBtn');
 const blastClrBtn = document.getElementById('blastClearBtn');
 const blastInfoEl = document.getElementById('blastInfo');
 
+// settings panel
+const blastSettingsBtn = document.getElementById('blastSettingsBtn');
+const blastSettingsEl  = document.getElementById('blastSettings');
+const filterMinId  = document.getElementById('filterMinId');
+const filterMinPct = document.getElementById('filterMinPct');
+const filterMinLen = document.getElementById('filterMinLen');
+const filteredCountEl = document.getElementById('filteredCount');
+
+let rawBlastHits = [];   // unfiltered hits from server
+let blastQueryLen = 0;   // length of the query sequence (for % query filter)
+
+blastSettingsBtn.addEventListener('click', () => {
+    blastSettingsEl.classList.toggle('open');
+    blastSettingsBtn.classList.toggle('active');
+});
+
+function onFilterChange() { if (rawBlastHits.length) applyFiltersAndDisplay(); }
+filterMinId.addEventListener('input', onFilterChange);
+filterMinPct.addEventListener('input', onFilterChange);
+filterMinLen.addEventListener('input', onFilterChange);
+
 if (blastBtn) {
     blastBtn.addEventListener('click', runBlast);
     blastIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') runBlast(); });
@@ -537,6 +596,7 @@ async function runBlast() {
     if (!query) return;
     // Strip FASTA header lines if pasted
     query = query.split('\n').filter(l => !l.startsWith('>')).join('');
+    blastQueryLen = query.length;
     blastBtn.disabled = true;
     blastBtn.textContent = 'Running...';
     blastInfoEl.textContent = '';
@@ -549,7 +609,8 @@ async function runBlast() {
         if (!resp.ok) throw new Error('Server error ' + resp.status);
         const data = await resp.json();
         if (data.error) throw new Error(data.error);
-        applyBlastHits(data.hits);
+        rawBlastHits = data.hits;
+        applyFiltersAndDisplay(true);
     } catch(e) {
         blastInfoEl.textContent = 'Error: ' + e.message;
     }
@@ -557,9 +618,26 @@ async function runBlast() {
     blastBtn.textContent = 'BLAST';
 }
 
-function applyBlastHits(hits) {
+function filterHits(hits) {
+    const minId  = parseFloat(filterMinId.value)  || 0;
+    const minPct = parseFloat(filterMinPct.value)  || 0;
+    const minLen = parseInt(filterMinLen.value)     || 0;
+    const minLenFromPct = blastQueryLen > 0 ? blastQueryLen * minPct / 100 : 0;
+
+    return hits.filter(h =>
+        h.pi >= minId &&
+        h.l >= minLen &&
+        h.l >= minLenFromPct
+    );
+}
+
+function applyFiltersAndDisplay(jumpToFirst) {
+    const filtered = filterHits(rawBlastHits);
+
+    filteredCountEl.textContent = filtered.length + ' / ' + rawBlastHits.length + ' hits pass filters';
+
     const bySeq = {};
-    for (const h of hits) {
+    for (const h of filtered) {
         if (!bySeq[h.id]) bySeq[h.id] = [];
         bySeq[h.id].push({
             s: h.s, e: h.e, st: h.st, pi: h.pi, l: h.l, ev: h.ev,
@@ -573,15 +651,17 @@ function applyBlastHits(hits) {
     }
 
     // If current seq has no hits, switch to first seq that does
-    const curId = SEQS[curIdx].id;
-    if (!bySeq[curId] && BLAST_MARKS.length > 0) {
-        const targetId = BLAST_MARKS[0].id;
-        const targetIdx = SEQS.findIndex(s => s.id === targetId);
-        if (targetIdx >= 0) {
-            seqSel.selectedIndex = targetIdx;
-            selectSeq(targetIdx);
-            scrollToBlastHit(0);
-            return;
+    if (jumpToFirst) {
+        const curId = SEQS[curIdx].id;
+        if (!bySeq[curId] && BLAST_MARKS.length > 0) {
+            const targetId = BLAST_MARKS[0].id;
+            const targetIdx = SEQS.findIndex(s => s.id === targetId);
+            if (targetIdx >= 0) {
+                seqSel.selectedIndex = targetIdx;
+                selectSeq(targetIdx);
+                scrollToBlastHit(0);
+                return;
+            }
         }
     }
 
@@ -589,16 +669,19 @@ function applyBlastHits(hits) {
     buildBlastCls(SEQS[curIdx]);
     rerenderVisible();
     updateBlastInfo();
-    if (activeBlastHit >= 0) scrollToBlastHit(activeBlastHit);
+    if (jumpToFirst && activeBlastHit >= 0) scrollToBlastHit(activeBlastHit);
 }
 
 function clearBlastHits() {
     BLAST_MARKS.length = 0;
+    rawBlastHits = [];
+    blastQueryLen = 0;
     blastHitsCur = [];
     activeBlastHit = -1;
     buildBlastCls(SEQS[curIdx]);
     rerenderVisible();
     updateBlastInfo();
+    filteredCountEl.textContent = '';
     blastIn.value = '';
 }
 
@@ -649,6 +732,92 @@ function updateBlastInfo() {
         blastNextBtn.disabled = true;
     }
 }
+
+// ── sequence selection (SnapGene-style) ──
+let selStart = -1;
+let selEnd = -1;
+let selecting = false;
+const posTip = document.getElementById('posTip');
+
+function getSeqPos(e) {
+    const el = e.target.closest('[data-p]');
+    if (el) return parseInt(el.dataset.p);
+    // Fallback: estimate from Y position
+    const y = e.clientY - spacer.getBoundingClientRect().top + viewport.scrollTop;
+    const bi = Math.floor(y / BLOCK_H);
+    const n = SEQS[curIdx].seq.length;
+    return Math.max(0, Math.min(bi * W + W - 1, n - 1));
+}
+
+function showTip(e, text) {
+    posTip.textContent = text;
+    posTip.style.display = 'block';
+    posTip.style.left = (e.clientX + 14) + 'px';
+    posTip.style.top = (e.clientY - 28) + 'px';
+}
+function hideTip() { posTip.style.display = 'none'; }
+
+spacer.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const pos = getSeqPos(e);
+    if (pos < 0) return;
+    selStart = pos;
+    selEnd = pos;
+    selecting = true;
+    rerenderVisible();
+    showTip(e, '' + (pos + 1));
+    e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (selecting) {
+        const pos = getSeqPos(e);
+        if (pos < 0) return;
+        if (pos !== selEnd) {
+            selEnd = pos;
+            rerenderVisible();
+        }
+        const lo = Math.min(selStart, selEnd) + 1;
+        const hi = Math.max(selStart, selEnd) + 1;
+        const len = hi - lo + 1;
+        if (lo === hi) showTip(e, '' + lo);
+        else showTip(e, lo + ' .. ' + hi + '  =  ' + len + ' bp');
+        return;
+    }
+    // Hover: show position of base under cursor
+    const el = e.target.closest('[data-p]');
+    if (el) {
+        showTip(e, '' + (parseInt(el.dataset.p) + 1));
+    } else {
+        hideTip();
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    if (selecting) {
+        selecting = false;
+        // Keep tip visible showing final selection range
+    }
+});
+
+// Hide tip when leaving the sequence area
+viewport.addEventListener('mouseleave', hideTip);
+
+// Clear selection when clicking toolbar inputs
+document.getElementById('toolbar').addEventListener('mousedown', () => {
+    if (selStart >= 0) { selStart = -1; selEnd = -1; rerenderVisible(); }
+    hideTip();
+});
+
+// Copy forward strand only
+document.addEventListener('copy', (e) => {
+    if (selStart < 0 || selStart === selEnd) return;
+    e.preventDefault();
+    const lo = Math.min(selStart, selEnd);
+    const hi = Math.max(selStart, selEnd);
+    const text = SEQS[curIdx].seq.substring(lo, hi + 1);
+    e.clipboardData.setData('text/plain', text);
+});
 
 // ── init ──
 measureBlockH();
@@ -825,9 +994,18 @@ def main():
   <button id="blastPrevBtn" disabled title="Previous BLAST hit">&laquo;</button>
   <button id="blastNextBtn" disabled title="Next BLAST hit">&raquo;</button>
   <button id="blastClearBtn" title="Clear BLAST highlights">Clear</button>
+  <button id="blastSettingsBtn" title="BLAST filter settings">&#9881;</button>
   <span id="blastInfo"></span>
 
   <span id="posIndicator"></span>
+</div>
+
+<div id="blastSettings">
+  <span class="filter-title">BLAST Filters:</span>
+  <label>Min % identity <input type="number" id="filterMinId" value="0" min="0" max="100" step="1"></label>
+  <label>Min % query length <input type="number" id="filterMinPct" value="0" min="0" max="100" step="5"></label>
+  <label>Min alignment bp <input type="number" id="filterMinLen" value="0" min="0" step="10"></label>
+  <span id="filteredCount"></span>
 </div>
 
 <div id="infobar">
@@ -838,6 +1016,7 @@ def main():
 <div id="viewport">
   <div id="spacer"></div>
 </div>
+<div id="posTip"></div>
 
 <script>
 const SEQS = {json.dumps(seq_data, separators=(',', ':'))};
